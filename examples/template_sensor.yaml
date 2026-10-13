@@ -1,0 +1,10 @@
+# Optional Home Assistant example. Replace sensor.your_calculated_value.
+# Merge this list entry into your existing template: section if one exists.
+template:
+  - sensor:
+      - name: ESP32 display result
+        unique_id: esp32_display_result
+        availability: "{{ is_number(states('sensor.your_calculated_value')) }}"
+        state: >-
+          {% set value = states('sensor.your_calculated_value') | float(0) | round(0) | int %}
+          {{ value if -99 <= value <= 999 else 'Err' }}

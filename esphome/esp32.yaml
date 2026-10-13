@@ -1,0 +1,205 @@
+# Display-only firmware. Use the Home Assistant ESP32 Display app to send values.
+# Requires existing Wi-Fi/API/OTA secrets. No bank logic or demo mode.
+substitutions:
+  display_timeout_seconds: '180'
+  single_segment_test: 'false'
+esphome:
+  name: esp32
+  friendly_name: ESP32
+  min_version: 2026.9.1
+  includes:
+  - <array>
+  - <driver/gpio.h>
+  - <esp_rom_sys.h>
+  - <freertos/FreeRTOS.h>
+  - <freertos/task.h>
+  on_boot:
+    priority: 800
+    then:
+    - lambda: |-
+        #if !defined(CONFIG_IDF_TARGET_ESP32)
+        #error "This display requires a classic dual-core ESP32 with the WROOM pin map."
+        #endif
+        const gpio_num_t digit_pins[] = {GPIO_NUM_25, GPIO_NUM_26, GPIO_NUM_27};
+        const gpio_num_t segment_pins[] = {GPIO_NUM_13, GPIO_NUM_14, GPIO_NUM_16, GPIO_NUM_17, GPIO_NUM_18, GPIO_NUM_19, GPIO_NUM_21};
+        uint64_t pin_mask = 0;
+        for (auto pin : digit_pins) { gpio_set_level(pin, 0); pin_mask |= 1ULL << pin; }
+        for (auto pin : segment_pins) { gpio_set_level(pin, 0); pin_mask |= 1ULL << pin; }
+        gpio_config_t conf{};
+        conf.pin_bit_mask = pin_mask;
+        conf.mode = GPIO_MODE_OUTPUT;
+        conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+        conf.intr_type = GPIO_INTR_DISABLE;
+        if (gpio_config(&conf) != ESP_OK) {
+          ESP_LOGE("outlook", "GPIO initialization failed; display disabled");
+          return;
+        }
+        for (auto pin : digit_pins) gpio_set_level(pin, 0);
+        for (auto pin : segment_pins) gpio_set_level(pin, 0);
+        struct DisplayContext {
+          std::array<uint32_t, 5> *frame;
+          portMUX_TYPE *lock;
+          uint32_t *expired;
+        };
+        static DisplayContext context{&id(display_frame), &id(display_lock), &id(display_expired)};
+        auto scan = [](void *arg) {
+          auto *ctx = static_cast<DisplayContext *>(arg);
+          const gpio_num_t digits[] = {GPIO_NUM_25, GPIO_NUM_26, GPIO_NUM_27};
+          const gpio_num_t segments[] = {GPIO_NUM_13, GPIO_NUM_14, GPIO_NUM_16, GPIO_NUM_17, GPIO_NUM_18, GPIO_NUM_19, GPIO_NUM_21};
+          uint8_t digit = 0;
+          for (;;) {
+            std::array<uint32_t, 5> frame;
+            portENTER_CRITICAL(ctx->lock);
+            frame = *ctx->frame;
+            portEXIT_CRITICAL(ctx->lock);
+            const bool expired = !frame[4] || (${display_timeout_seconds} > 0 &&
+              static_cast<uint32_t>(esphome::millis() - frame[3]) >= static_cast<uint32_t>(${display_timeout_seconds}) * 1000U);
+            __atomic_store_n(ctx->expired, expired ? 1U : 0U, __ATOMIC_RELAXED);
+            for (auto pin : digits) gpio_set_level(pin, 0);
+            for (auto pin : segments) gpio_set_level(pin, 0);
+            esp_rom_delay_us(150);
+            uint8_t mask = expired ? (digit == 0 ? 0x79 : 0x50) : frame[digit];
+            uint8_t active = digit;
+            if (${single_segment_test}) { mask = 0x01; active = 0; }
+            for (uint8_t i = 0; i < 7; ++i) gpio_set_level(segments[i], (mask >> i) & 1U);
+            gpio_set_level(digits[active], 1);
+            digit = (digit + 1) % 3;
+            vTaskDelay(pdMS_TO_TICKS(2) > 0 ? pdMS_TO_TICKS(2) : 1);
+          }
+        };
+        if (xTaskCreatePinnedToCore(scan, "display-scan", 4096, &context, 3, &id(display_task_handle), 1) != pdPASS) {
+          id(display_task_handle) = nullptr;
+          ESP_LOGE("display", "Display task creation failed; outputs remain off");
+        }
+        ESP_LOGI("display", "Home Assistant display receiver ready; timeout=%d seconds", ${display_timeout_seconds});
+  on_shutdown:
+    priority: 700
+    then:
+    - lambda: |-
+        if (id(display_task_handle) != nullptr) {
+          vTaskDelete(id(display_task_handle));
+          id(display_task_handle) = nullptr;
+        }
+        for (auto pin : {GPIO_NUM_25, GPIO_NUM_26, GPIO_NUM_27, GPIO_NUM_13, GPIO_NUM_14, GPIO_NUM_16, GPIO_NUM_17, GPIO_NUM_18, GPIO_NUM_19, GPIO_NUM_21})
+          gpio_set_level(pin, 0);
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+logger:
+  level: INFO
+api:
+  encryption:
+    key: !secret 'esp32_api_key'
+  reboot_timeout: 0s
+ota:
+- platform: esphome
+  password: !secret 'esp32_ota_password'
+wifi:
+  ssid: !secret 'wifi_ssid'
+  password: !secret 'wifi_password'
+globals:
+- id: display_frame
+  type: std::array<uint32_t, 5>
+  restore_value: false
+  initial_value: std::array<uint32_t, 5>{0x79, 0x50, 0x50, 0, 0}
+- id: display_lock
+  type: portMUX_TYPE
+  restore_value: false
+  initial_value: portMUX_TYPE portMUX_INITIALIZER_UNLOCKED
+- id: display_expired
+  type: uint32_t
+  restore_value: false
+  initial_value: '1'
+- id: display_task_handle
+  type: TaskHandle_t
+  restore_value: false
+  initial_value: nullptr
+- id: requested_value
+  type: std::string
+  restore_value: false
+  initial_value: '"Err"'
+text:
+- platform: template
+  id: display_value
+  name: Display value
+  icon: mdi:digital-clock
+  mode: text
+  min_length: 0
+  max_length: 3
+  update_interval: 1s
+  lambda: |-
+    if (${single_segment_test}) return {"A"};
+    if (__atomic_load_n(&id(display_expired), __ATOMIC_RELAXED)) return {"Err"};
+    return {id(requested_value)};
+  set_action:
+  - lambda: |-
+      // Only rendering and transport validation happen here. Calculations stay in HA.
+      if (x.size() > 3) {
+        ESP_LOGW("display", "Rejected value longer than three characters");
+        return;
+      }
+      auto glyph = [](char c) -> int {
+        switch (c) {
+          case '0': return 0x3F; case '1': return 0x06; case '2': return 0x5B;
+          case '3': return 0x4F; case '4': return 0x66; case '5': return 0x6D;
+          case '6': return 0x7D; case '7': return 0x07; case '8': return 0x7F;
+          case '9': return 0x6F;
+          case 'A': case 'a': return 0x77;
+          case 'B': case 'b': return 0x7C;
+          case 'C': return 0x39; case 'c': return 0x58;
+          case 'D': case 'd': return 0x5E;
+          case 'E': case 'e': return 0x79;
+          case 'F': case 'f': return 0x71;
+          case 'G': case 'g': return 0x7D;
+          case 'H': case 'h': return 0x76;
+          case 'I': case 'i': return 0x06;
+          case 'J': case 'j': return 0x1E;
+          case 'L': case 'l': return 0x38;
+          case 'N': case 'n': return 0x54;
+          case 'O': return 0x3F; case 'o': return 0x5C;
+          case 'P': case 'p': return 0x73;
+          case 'R': case 'r': return 0x50;
+          case 'S': case 's': return 0x6D;
+          case 'T': case 't': return 0x78;
+          case 'U': case 'u': return 0x3E;
+          case 'Y': case 'y': return 0x6E;
+          case '-': return 0x40; case '_': return 0x08; case ' ': return 0;
+          default: return -1;
+        }
+      };
+      std::array<uint32_t, 5> frame{0, 0, 0, esphome::millis(), 1};
+      const size_t offset = 3 - x.size();
+      for (size_t i = 0; i < x.size(); ++i) {
+        const int mask = glyph(x[i]);
+        if (mask < 0) {
+          ESP_LOGW("display", "Rejected unsupported seven-segment character");
+          return;
+        }
+        frame[offset + i] = static_cast<uint32_t>(mask);
+      }
+      portENTER_CRITICAL(&id(display_lock));
+      id(display_frame) = frame;
+      portEXIT_CRITICAL(&id(display_lock));
+      id(requested_value) = x;
+      __atomic_store_n(&id(display_expired), 0U, __ATOMIC_RELAXED);
+      id(display_value).publish_state(x);
+binary_sensor:
+- platform: template
+  name: Display waiting for update
+  entity_category: diagnostic
+  lambda: return __atomic_load_n(&id(display_expired), __ATOMIC_RELAXED) != 0;
+- platform: gpio
+  name: Display physical button
+  pin:
+    number: GPIO32
+    mode:
+      input: true
+      pullup: true
+    inverted: true
+  filters:
+  - delayed_on: 40ms
+  - delayed_off: 40ms
+button:
+- platform: restart
+  name: Restart

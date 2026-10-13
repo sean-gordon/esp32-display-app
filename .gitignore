@@ -1,0 +1,33 @@
+# Credentials and local configuration
+secrets.yaml
+secrets.yml
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+# Device/user data and compiled firmware
+.esphome/
+.pio/
+*.bin
+*.elf
+*.map
+*.zip
+display_settings.json
+options.json
+/data/
+# Python/test/editor artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+tests/runtime/
+tests/ui.js
+.venv/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
