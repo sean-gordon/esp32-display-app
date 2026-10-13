@@ -1,6 +1,6 @@
 # Development and publication
 
-The repository is private. `main` is the release baseline; `development` is the
+The repository is public. `main` is the release baseline; `development` is the
 working branch for updates. Branch protections are not configured automatically.
 
 Before committing:
@@ -26,9 +26,13 @@ computer with working GitHub access after `gh auth login`. It creates a NEW priv
 repository, pushes main and development, and keeps main as the default branch.
 Do not run it from an extracted source archive without Git history.
 
-A private GitHub repository is not offered as an unauthenticated Home Assistant
-App store repository. Install by copying the app folder into local_apps. For an
-update, copy the revised esp32_display folder, increment its config.yaml version,
-then use Check for updates and Update in Home Assistant. Firmware changes require
-ESPHome Validate/Install separately. This project does not deploy from GitHub to
-Home Assistant automatically.
+Install from the App store using the repository URL; append `#development` to
+follow the development branch. Local installation remains supported. Increment
+the app's config.yaml version for an update, push the chosen branch, then use
+Check for updates and Update in Home Assistant. Firmware changes require
+ESPHome Validate/Install separately. This project does not deploy from GitHub
+to Home Assistant automatically.
+
+PUBLISH.ps1 is only for initial repository creation and defaults to private. The
+current repository was subsequently made public by its owner; do not rerun that
+script for updates.

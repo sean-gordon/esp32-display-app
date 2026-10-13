@@ -26,6 +26,27 @@ connection transports the result. There is no custom integration to install.
 
 This package targets Home Assistant OS with Supervisor and an App store.
 
+### Install from GitHub
+
+In **Settings > Apps > App store > Repositories**, add:
+
+```text
+https://github.com/sean-gordon/esp32-display-app
+```
+
+To receive updates from the development branch instead, add this URL:
+
+```text
+https://github.com/sean-gordon/esp32-display-app#development
+```
+
+Choose one branch URL. Find **ESP32 Display**, install it, start it and enable
+**Show in sidebar**. The repository must be publicly accessible for these URLs.
+Use Check for updates after changes are pushed. App updates require a new version
+in `esp32_display/config.yaml`; firmware updates still use ESPHome Builder.
+
+### Local installation alternative
+
 1. Unzip the package on your computer. Copy the **entire `esp32_display` folder**
    to the Home Assistant **`local_apps`** Samba share, or to `/local_apps` using
    the SSH app. The result must be `/local_apps/esp32_display/config.yaml`.
